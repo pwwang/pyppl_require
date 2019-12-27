@@ -1,0 +1,5 @@
+cmdy
+pyppl==3.*
+pyppl-annotate
+pytest
+pytest-cov

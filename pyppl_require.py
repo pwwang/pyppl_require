@@ -1,134 +1,143 @@
 """Requirement manager for processes of PyPPL"""
-
 import sys
-from os import path
-from functools import partial
-import importlib.util
+import importlib
 from pathlib import Path
+import toml
 import cmdy
-from diot import Diot
-from pyparam import params
-from pyppl.plugin import hookimpl, pluginmgr
-from pyppl.logger import Logger
+from diot import OrderedDiot
+from pyppl.plugin import hookimpl
+from pyppl.logger import logger
+from pyppl import PIPELINES, PROCESSES
 
-__version__ = "0.0.1"
-logger      = Logger(name = 'pyppl_require')
-incli       = False
-pipelines   = []
-next2run    = None
+def load_pipeline(pipeline):
+	"""Load pipelines from path
+	If loaded, they should be in PIPELINES
+	"""
+	pipeline = Path(pipeline)
+	logger.info('Loading pipelines from %s', pipeline)
+	if '/' not in str(pipeline):
+		pipeline = Path(cmdy.which(pipeline).strip())
+	if not pipeline.is_file():
+		logger.error("Pipeline script does not exist: %s", pipeline)
+		sys.exit(1)
 
-def _logger(msg, level):
-	getattr(logger, level)('[pyppl_require] ' + msg)
-
-def _loadPipeline(script):
-	script = str(script)
-	if not script.endswith('.py'):
-		script = script + '.py'
-	if not path.isfile(script):
-		raise OSError("Pipeline script does not exist: {}".format(script))
-	_logger('Loading pipeline script: %s' % script, 'info')
-	spec = importlib.util.spec_from_file_location("mypipeline", script)
-	spec.loader.exec_module(importlib.util.module_from_spec(spec))
+	spec = importlib.util.spec_from_file_location("__main__", pipeline)
 	ret = importlib.util.module_from_spec(spec)
-	#spec.loader.exec_module(ret)
-	return ret
+	try:
+		spec.loader.exec_module(ret)
+	except SystemExit:
+		pass
 
-def _cliAddParams():
+	if not PIPELINES:
+		logger.warning("  No pipelines found at %s" % pipeline)
+		if PROCESSES:
+			logger.warning("  But found processes: ")
+			for process in PROCESSES:
+				logger.warning("    %s", process)
+		else:
+			logger.error(  "No pipelines nor processes found.")
+			sys.exit(1)
+
+def install_process(proc, failed_tools, bindir):
+	"""Install failed tools for a process"""
+	logger.install('  Installing failed tools')
+
+	for tool, info in failed_tools.items():
+		if 'install' not in info:
+			logger.warning('    - %s: No `install` found in the annotation.', tool)
+			continue
+
+		install = proc.template(info['install'], **proc.envs).render(
+			dict(proc = proc, args = proc.args, bindir = bindir))
+		installcmd = cmdy.bash(c = install, _raise = False)
+		if installcmd.rc == 0:
+			logger.info('    - %s: INSTALLED', tool)
+		else:
+			logger.error('    - %s: FAILED', tool)
+
+def validate_process(proc, install = None, post = False):
+	"""Validate tools for a process"""
+	if not post:
+		logger.process(proc)
+	if not proc.config.annotate: # pragma: no cover
+		logger.warning("  No annotations found, skip.")
+		return
+	reqanno = proc.config.annotate.section('requires', toml.loads)
+	if not reqanno:
+		logger.warning("  No `requires` in annotation, skip.")
+		return
+
+	failed_tools = OrderedDiot()
+	logger['re-vali' if post else 'valid'](
+		'  Post-install validating ...' if post else '  Validating ...')
+	for tool, info in reqanno.items():
+		if 'validate' not in info:
+			logger.error('    - %s: No `validate` found in the annotation.', tool)
+			continue
+		when = info.get('when', 'true')
+		when = proc.template(when, **proc.envs).render(dict(proc = proc, args = proc.args))
+		whencmd = cmdy.bash(c = when, _raise = False)
+		if whencmd.rc != 0:
+			logger.info("    - %s: condition (when) not met, skip.", tool)
+			continue
+		validate = proc.template(info['validate'], **proc.envs).render(
+			dict(proc = proc, args = proc.args))
+		validcmd = cmdy.bash(c = validate, _raise = False)
+		if validcmd.rc != 0:
+			logger['warning' if not post else 'error'](
+				'    - %s: FAILED', tool)
+			failed_tools[tool] = info
+		else:
+			logger.info('    - %s: PASSED', tool)
+
+	if install and failed_tools:
+		install_process(proc, failed_tools, bindir = install)
+		validate_process(proc, install = None, post = True)
+
+@hookimpl
+def pyppl_prerun(ppl):
+	"""Stop pipeline from running"""
+	logger.warning("Pipeline was prevented from running by pyppl_require.")
+	return False
+
+@hookimpl
+def logger_init(logger):
+	"""Add log levels"""
+	logger.add_level('require', 'title')
+	logger.add_level('Valid')
+	logger.add_level('Install')
+	logger.add_level('Re-vali')
+
+@hookimpl
+def cli_addcmd(commands):
+	"""Add command to pyppl."""
+	commands.require = __doc__
+	params = commands.require
 	params._desc         = 'Process requirement manager'
 	params.pipe.required = True
 	params.pipe.desc     = 'The pipeline script.'
 	params.p             = params.pipe
-	params.validate      = False
-	params.validate.desc = 'Validate the requirements'
 	params.install.desc  = ['Install the requirements. ',
-		'You can specify a directory (default: /usr/bin) to install the requirements.']
-	params.install.callback = lambda opt, ps: "Either --install or --validate is required." \
-		if not ps.install.value and not ps.validate.value else None
+		'You can specify a directory (default: $HOME/bin) to install the requirements.']
+	params.install.callback = lambda opt: \
+		opt.setValue(Path.home().joinpath('bin')) \
+		if opt.value is True \
+		else opt.setValue(Path(opt.value)) \
+		if opt.value \
+		else None
 
-def _validate(proc):
-	if not proc.require:
-		_logger("Requirements for process %r is not documented." % proc.name(), 'warning')
-		return None
-	failed = []
-	for tool, info in proc.require.items():
-		_logger(f"Validating {tool} ... ", 'info')
-		cmd = cmdy.bash(c = info['validate'], _raise = False)
-		if cmd.rc != 0:
-			failed.append((tool, info))
-			_logger("Failed.", 'error')
-			_logger("Validation command: " + cmd.cmd, 'info')
-			for err in cmd.stderr.splitlines():
-				_logger(f"  {err}", 'error')
+@hookimpl
+def cli_execcmd(command, opts):
+	"""Execute the command"""
+	if command == 'require':
+		load_pipeline(opts.p)
+		if PIPELINES:
+			for name, pipeline in PIPELINES.items():
+				logger.require('-' * 80)
+				logger.require('Processing pipeline: %s', name)
+				logger.require('-' * 80)
+				for process in pipeline.procs:
+					validate_process(process, install = opts.install)
 		else:
-			_logger("Installed.", 'info')
-	return failed
-
-def _install(proc, bindir):
-	failed = _validate(proc)
-	if not failed:
-		_logger('All requirements met, nothing to install.', 'info')
-	else:
-		for tool, info in failed:
-			_logger('Installing %s ...' % tool, 'info')
-			cmd = cmdy.bash(c = info['install'].replace('$bindir$', bindir),
-				_iter = 'err', _raise = True)
-			for line in cmd.__iter__():
-				_logger(f'  {line}'.rstrip(), 'error')
-			if cmd.rc != 0:
-				_logger("Failed to install, please intall it manually.", 'error')
-				_logger("  " + cmd.cmd, 'error')
-			else:
-				_logger("Succeeded!", 'info')
-		_logger("Validating if it is a valid installation ...", 'info')
-		_validate(proc)
-
-@hookimpl
-def pypplInit(ppl):
-	for pipe in pipelines:
-		if pipe is ppl:
-			break
-	else:
-		pipelines.append(ppl)
-
-@hookimpl
-def pypplPreRun(ppl):
-	if incli:
-		global next2run
-		next2run = ppl.tree.getNextToRun
-		ppl.tree.getNextToRun = lambda: []
-
-@hookimpl
-def procInit(proc):
-	proc.config.require = Diot()
-	proc.props.requireValidate = partial(_validate, proc = proc)
-	proc.props.requireInstall = partial(_install, proc = proc)
-
-@hookimpl
-def procBuildProps(proc):
-	for req, info in proc.require.items():
-		if 'validate' in info:
-			info['validate'] = proc.template(info['validate']).render(dict(proc = proc, args = proc.args))
-		if 'install' in info:
-			info['install'] = proc.template(info['install']).render(dict(proc = proc, args = proc.args))
-
-def console():
-	global incli
-	incli = True
-	_cliAddParams()
-	opts = params._parse(dict_wrapper = Diot)
-	_loadPipeline(opts.pipe)
-
-	for pipe in pipelines:
-		_logger('pyppl_require: working on pipeline with start processes: %r' % pipe.tree.starts, 'info')
-		proc = next2run()
-		while proc:
-			proc._buildProps()
-			#proc._buildProcVars()
-			if opts.install:
-				proc.requireInstall(bindir = '/usr/bin' if opts.install is True else opts.install)
-			else:
-				proc.requireValidate()
-			proc = next2run()
-
-if not pluginmgr.has_plugin('pyppl_require'):
-	pluginmgr.register(__import__('pyppl_require'))
+			for process in PROCESSES:
+				validate_process(process, install = opts.install)

@@ -14,14 +14,13 @@ repository = "https://github.com/pwwang/pyppl_require"
 
 [tool.poetry.dependencies]
 python = "^3.6"
-pyppl = "*"
 cmdy = "*"
+pyppl = "3.*"
+pyppl_annotate = "*"
 
 [tool.poetry.dev-dependencies]
 pytest = "*"
 pytest-cov = "*"
 
-[tool.poetry.scripts]
-pyppl_require = "pyppl_require:console"
-pyppl-require = "pyppl_require:console"
-
+[tool.poetry.plugins.pyppl]
+pyppl_require = "pyppl_require"
