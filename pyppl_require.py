@@ -7,7 +7,7 @@ import cmdy
 from diot import OrderedDiot
 from pyppl.plugin import hookimpl
 from pyppl.logger import logger
-from pyppl import PIPELINES, PROCESSES
+from pyppl.pyppl import PIPELINES, PROCESSES
 
 def load_pipeline(pipeline):
 	"""Load pipelines from path
