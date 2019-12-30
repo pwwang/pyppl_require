@@ -43,7 +43,13 @@ def test_none():
 	assert 'No pipelines nor processes found.' in err
 
 def test_pipeline():
-	err = cmd(p = pipeline).stderr
-	assert 'Pipeline was prevented from running by pyppl_require.' in err
+	c = cmd(p = pipeline)
+	print(c.cmd)
+	assert 'Pipeline was prevented from running by pyppl_require.' in c.stderr
 	# unrelated procs are not loaded.
-	assert 'pProcessNoValid' not in err
+	assert 'pProcessNoValid' not in c.stderr
+
+def test_noclimode():
+	"""Not in cli mode, pipeline should be running"""
+	c = cmdy.python(pipeline, _exe = sys.executable, _raise = False)
+	assert 'Pipeline was prevented from running by pyppl_require.' not in c.stderr

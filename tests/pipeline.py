@@ -1,6 +1,9 @@
 import sys
-from pyppl import PyPPL
+from pyppl import PyPPL, config_plugins
+import pyppl_require
 from procs import pProcess1, pProcessInstallFail
+
+config_plugins(pyppl_require)
 
 pProcess1.input = 'a'
 pProcess1.input = [1]

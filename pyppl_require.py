@@ -7,6 +7,7 @@ import cmdy
 from diot import OrderedDiot
 from pyppl.plugin import hookimpl
 from pyppl.logger import logger
+from pyppl.config import config
 from pyppl.pyppl import PIPELINES, PROCESSES
 
 def load_pipeline(pipeline):
@@ -24,6 +25,7 @@ def load_pipeline(pipeline):
 	spec = importlib.util.spec_from_file_location("__main__", pipeline)
 	ret = importlib.util.module_from_spec(spec)
 	try:
+		config.config.require_norun = True
 		spec.loader.exec_module(ret)
 	except SystemExit:
 		pass
@@ -95,10 +97,16 @@ def validate_process(proc, install = None, post = False):
 		validate_process(proc, install = None, post = True)
 
 @hookimpl
-def pyppl_prerun(ppl):
+def setup(config):
+	"""Add a flag, only stop running process when pipelines are loaded in cli mode"""
+	config.config.require_norun = False
+
+@hookimpl
+def pyppl_prerun(ppl): # pylint: disable=inconsistent-return-statements
 	"""Stop pipeline from running"""
-	logger.warning("Pipeline was prevented from running by pyppl_require.")
-	return False
+	if config.config.get('require_norun'):
+		logger.warning("Pipeline was prevented from running by pyppl_require.")
+		return False
 
 @hookimpl
 def logger_init(logger):
