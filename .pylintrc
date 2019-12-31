@@ -74,7 +74,8 @@ disable=bad-whitespace,
         pointless-statement,
         no-name-in-module,
         unused-argument,
-        redefined-outer-name
+        redefined-outer-name,
+        global-statement
 
 # Enable the message, report, category or checker with the given id(s). You can
 # either give multiple identifier separated by comma (,) or put this option
