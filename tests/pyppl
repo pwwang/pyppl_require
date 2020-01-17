@@ -5,12 +5,14 @@ from pyppl.plugin import pluginmgr
 import pyppl_require
 import pyppl_annotate
 for plugin in pluginmgr.get_plugins():
-	if plugin is not pyppl_require and plugin is not pyppl_annotate:
-		pluginmgr.unregister(plugin)
+    if plugin is not pyppl_require and plugin is not pyppl_annotate:
+        pluginmgr.unregister(plugin)
 config_plugins(pyppl_require)
 from pyppl import console
 
 if len(sys.argv) > 1 and sys.argv[1] != 'require':
-	raise RuntimeError('This is only for pyppl_require test, please pass the subcommand "require" to me!')
+    raise RuntimeError(
+        'This is only for pyppl_require test, please pass the subcommand "require" to me!'
+    )
 
 console.main()
