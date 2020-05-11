@@ -6,12 +6,13 @@ import toml
 import cmdy
 from diot import OrderedDiot
 from pyppl.plugin import hookimpl
-from pyppl.logger import logger
+from pyppl.logger import Logger
 from pyppl.pyppl import PIPELINES, PROCESSES
 
 # pylint: disable=unused-argument
 
 REQUIRE_FLAG = False
+logger = Logger(plugin='require') # pylint: disable=invalid-name
 
 
 def load_pipeline(pipeline):
